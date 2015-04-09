@@ -12,4 +12,3 @@ RUN cd /app/mjpg-streamer; make USE_LIBV4L2=true clean all
 
 COPY start.sh /app/start.sh
 CMD ["/bin/bash", "/app/start.sh"]
-CMD ["/bin/sleep", "300"]
