@@ -12,4 +12,5 @@ RUN apt-get install -y libjpeg8-dev imagemagick libv4l-dev make
 RUN ln -s /usr/include/linux/videodev2.h /usr/include/linux/videodev.h
 RUN cd /app/mjpg-streamer; make USE_LIBV4L2=true clean all
 
-CMD ['/bin/bash', '/app/start.sh']
+CMD ['sleep', '600']
+#CMD ['/bin/bash', '/app/start.sh']
