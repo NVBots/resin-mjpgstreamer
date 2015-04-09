@@ -1,8 +1,6 @@
 FROM resin/rpi-raspbian:wheezy-2015-04-01
 
 RUN apt-get update
-RUN apt-get upgrade
-
 
 # Install debian packages
 RUN apt-get install -y libjpeg8-dev imagemagick libv4l-dev make
