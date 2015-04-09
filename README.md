@@ -15,7 +15,7 @@ Then, run the following commands:
 
 Boot a Raspberry Pi with the SD card.
 
-To view on local network, go to <device_ip>:8080
+To view on local network, go to `<device_ip>:8080`
 
 To view on internet, enable public ip through the resin dashboard and click on the link to port 8080
 
