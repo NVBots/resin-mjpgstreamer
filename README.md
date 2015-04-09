@@ -6,8 +6,6 @@ Instructions:
 
 First, create a resin.io application and write the image to an SD card.
 
-Add two environment variables to the application: USERNAME and PASSWORD
-
 Then, run the following commands:
 
 - `git clone https://github.com/NVBots/resin-mjpgstreamer.git`
