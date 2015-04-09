@@ -19,6 +19,7 @@ To view on local network, go to `<device_ip>:8080`
 
 To view on internet, enable public ip through the resin dashboard and click on the link to port 8080
 
+To enable authentication, edit start.sh to use the commented mjpg-streamer command instead. Also add two environment variables through the resin.io dashboard: USERNAME and PASSWORD. Note that authentication currently only works over the local network.
 
 Sources:
 
