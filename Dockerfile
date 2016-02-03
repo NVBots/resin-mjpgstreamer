@@ -3,7 +3,7 @@ FROM resin/rpi-raspbian:wheezy-2015-04-01
 RUN apt-get update
 
 # Install debian packages
-RUN apt-get install -y libjpeg8-dev imagemagick libv4l-dev cmake
+RUN apt-get install -y libjpeg8-dev imagemagick libv4l-dev make cmake
 
 # Install mjpgstreamer
 COPY mjpg-streamer /app/mjpg-streamer
