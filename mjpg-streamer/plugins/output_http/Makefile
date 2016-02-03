@@ -11,10 +11,16 @@ CC = gcc
 
 OTHER_HEADERS = ../../mjpg_streamer.h ../../utils.h ../output.h ../input.h
 
-CFLAGS += -O1 -DLINUX -D_GNU_SOURCE -Wall -shared -fPIC
-#CFLAGS +=  -g
-#CFLAGS += -DDEBUG
+CFLAGS += -DLINUX -D_GNU_SOURCE -Wall -shared -fPIC -Wuninitialized
+
+#CFLAGS += -g -DDEBUG # uncomment it to get debug symbols compiled in and debug messages shown
+#CFLAGS += -DMANAGMENT # experimental feature to control the clients maximum allowed thread count
+
 LFLAGS += -lpthread -ldl
+
+ifeq ($(WXP_COMPAT),true)
+CFLAGS += -DWXP_COMPAT
+endif
 
 all: output_http.so
 

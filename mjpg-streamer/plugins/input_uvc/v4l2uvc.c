@@ -55,7 +55,7 @@ int xioctl(int fd, int IOCTL_X, void *arg)
 static int init_v4l2(struct vdIn *vd);
 
 int init_videoIn(struct vdIn *vd, char *device, int width,
-                 int height, int fps, int format, int grabmethod, globals *pglobal, int id)
+                 int height, int fps, int format, int grabmethod, globals *pglobal, int id, v4l2_std_id vstd)
 {
     if(vd == NULL || device == NULL)
         return -1;
@@ -77,26 +77,42 @@ int init_videoIn(struct vdIn *vd, char *device, int width,
     vd->height = height;
     vd->fps = fps;
     vd->formatIn = format;
+	vd->vstd = vstd;
     vd->grabmethod = grabmethod;
+    vd->soft_framedrop = 0;
     if(init_v4l2(vd) < 0) {
         fprintf(stderr, " Init v4L2 failed !! exit fatal \n");
         goto error;;
     }
 
+    // getting the name of the input source
+    struct v4l2_input in_struct;
+    memset(&in_struct, 0, sizeof(struct v4l2_input));
+    in_struct.index = 0;
+    if (xioctl(vd->fd, VIDIOC_ENUMINPUT,  &in_struct) == 0) {
+        int nameLength = strlen((char*)&in_struct.name);
+        pglobal->in[id].name = malloc((1+nameLength)*sizeof(char));
+        sprintf(pglobal->in[id].name, "%s", in_struct.name);
+        DBG("Input name: %s\n", in_struct.name);
+    } else {
+        DBG("VIDIOC_ENUMINPUT failed\n");
+    }
 
     // enumerating formats
-    int currentWidth, currentHeight = 0;
+
     struct v4l2_format currentFormat;
+    memset(&currentFormat, 0, sizeof(struct v4l2_format));
     currentFormat.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
-    if(xioctl(vd->fd, VIDIOC_G_FMT, &currentFormat) == 0) {
-        currentWidth = currentFormat.fmt.pix.width;
-        currentHeight = currentFormat.fmt.pix.height;
-        DBG("Current size: %dx%d\n", currentWidth, currentHeight);
+    if (xioctl(vd->fd, VIDIOC_G_FMT, &currentFormat) == 0) {
+        DBG("Current size: %dx%d\n",
+             currentFormat.fmt.pix.width,
+             currentFormat.fmt.pix.height);
     }
 
     pglobal->in[id].in_formats = NULL;
     for(pglobal->in[id].formatCount = 0; 1; pglobal->in[id].formatCount++) {
         struct v4l2_fmtdesc fmtdesc;
+        memset(&fmtdesc, 0, sizeof(struct v4l2_fmtdesc));
         fmtdesc.index = pglobal->in[id].formatCount;
         fmtdesc.type  = V4L2_BUF_TYPE_VIDEO_CAPTURE;
         if(xioctl(vd->fd, VIDIOC_ENUM_FMT, &fmtdesc) < 0) {
@@ -114,7 +130,6 @@ int init_videoIn(struct vdIn *vd, char *device, int width,
             return -1;
         }
 
-
         memcpy(&pglobal->in[id].in_formats[pglobal->in[id].formatCount], &fmtdesc, sizeof(input_format));
 
         if(fmtdesc.pixelformat == format)
@@ -122,7 +137,7 @@ int init_videoIn(struct vdIn *vd, char *device, int width,
 
         DBG("Supported format: %s\n", fmtdesc.description);
         struct v4l2_frmsizeenum fsenum;
-        fsenum.index = pglobal->in[id].formatCount;
+        memset(&fsenum, 0, sizeof(struct v4l2_frmsizeenum));
         fsenum.pixel_format = fmtdesc.pixelformat;
         int j = 0;
         pglobal->in[id].in_formats[pglobal->in[id].formatCount].supportedResolutions = NULL;
@@ -133,12 +148,13 @@ int init_videoIn(struct vdIn *vd, char *device, int width,
             j++;
             if(xioctl(vd->fd, VIDIOC_ENUM_FRAMESIZES, &fsenum) == 0) {
                 pglobal->in[id].in_formats[pglobal->in[id].formatCount].resolutionCount++;
+
                 if (pglobal->in[id].in_formats[pglobal->in[id].formatCount].supportedResolutions == NULL) {
-                    pglobal->in[id].in_formats[pglobal->in[id].formatCount].supportedResolutions =
-                        (input_resolution*)calloc(1, sizeof(input_resolution));
+                    pglobal->in[id].in_formats[pglobal->in[id].formatCount].supportedResolutions = (input_resolution*)
+                            calloc(1, sizeof(input_resolution));
                 } else {
-                    pglobal->in[id].in_formats[pglobal->in[id].formatCount].supportedResolutions =
-                        (input_resolution*)realloc(pglobal->in[id].in_formats[pglobal->in[id].formatCount].supportedResolutions, j * sizeof(input_resolution));
+                    pglobal->in[id].in_formats[pglobal->in[id].formatCount].supportedResolutions = (input_resolution*)
+                            realloc(pglobal->in[id].in_formats[pglobal->in[id].formatCount].supportedResolutions, j * sizeof(input_resolution));
                 }
 
                 if (pglobal->in[id].in_formats[pglobal->in[id].formatCount].supportedResolutions == NULL) {
@@ -163,14 +179,18 @@ int init_videoIn(struct vdIn *vd, char *device, int width,
     /* alloc a temp buffer to reconstruct the pict */
     vd->framesizeIn = (vd->width * vd->height << 1);
     switch(vd->formatIn) {
-    case V4L2_PIX_FMT_MJPEG:
+    case V4L2_PIX_FMT_MJPEG: // in JPG mode the frame size is varies at every frame, so we allocate a bit bigger buffer
         vd->tmpbuffer = (unsigned char *) calloc(1, (size_t) vd->framesizeIn);
         if(!vd->tmpbuffer)
             goto error;
         vd->framebuffer =
             (unsigned char *) calloc(1, (size_t) vd->width * (vd->height + 8) * 2);
         break;
+    case V4L2_PIX_FMT_RGB565: // buffer allocation for non varies on frame size formats
     case V4L2_PIX_FMT_YUYV:
+        vd->framebuffer =
+            (unsigned char *) calloc(1, (size_t) vd->framesizeIn);
+        break;
         vd->framebuffer =
             (unsigned char *) calloc(1, (size_t) vd->framesizeIn);
         break;
@@ -228,6 +248,13 @@ static int init_v4l2(struct vdIn *vd)
         }
     }
 
+    if (vd->vstd != V4L2_STD_UNKNOWN) {
+        if (ioctl(vd->fd, VIDIOC_S_STD, &vd->vstd) == -1) {
+            fprintf(stderr, "Can't set video standard: %s\n",strerror(errno));
+            goto fatal;
+        }
+    }
+
     /*
      * set format in
      */
@@ -253,10 +280,16 @@ static int init_v4l2(struct vdIn *vd)
          */
         if(vd->formatIn != vd->fmt.fmt.pix.pixelformat) {
             if(vd->formatIn == V4L2_PIX_FMT_MJPEG) {
-                fprintf(stderr, "The inpout device does not supports MJPEG mode\nYou may also try the YUV mode (-yuv option), but it requires a much more CPU power\n");
+                fprintf(stderr, "The input device does not supports MJPEG mode\n"
+                                "You may also try the YUV mode (-yuv option), \n"
+                                "or the you can set another supported formats using the -fourcc argument.\n"
+                                "Note: streaming using uncompressed formats will require much more CPU power on your server\n");
                 goto fatal;
             } else if(vd->formatIn == V4L2_PIX_FMT_YUYV) {
-                fprintf(stderr, "The input device does not supports YUV mode\n");
+                fprintf(stderr, "The input device does not supports YUV format\n");
+                goto fatal;
+            } else if (vd->formatIn == V4L2_PIX_FMT_RGB565) {
+                fprintf(stderr, "The input device does not supports RGB565 format\n");
                 goto fatal;
             }
         } else {
@@ -267,13 +300,59 @@ static int init_v4l2(struct vdIn *vd)
     /*
      * set framerate
      */
-    struct v4l2_streamparm *setfps;
-    setfps = (struct v4l2_streamparm *) calloc(1, sizeof(struct v4l2_streamparm));
-    memset(setfps, 0, sizeof(struct v4l2_streamparm));
-    setfps->type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
-    setfps->parm.capture.timeperframe.numerator = 1;
-    setfps->parm.capture.timeperframe.denominator = vd->fps;
-    ret = xioctl(vd->fd, VIDIOC_S_PARM, setfps);
+
+    if (vd->fps != -1) {
+        struct v4l2_streamparm *setfps;
+        setfps = (struct v4l2_streamparm *) calloc(1, sizeof(struct v4l2_streamparm));
+        memset(setfps, 0, sizeof(struct v4l2_streamparm));
+        setfps->type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
+
+        /*
+        * first query streaming parameters to determine that the FPS selection is supported
+        */
+        ret = xioctl(vd->fd, VIDIOC_G_PARM, setfps);
+        if (ret == 0) {
+            if (setfps->parm.capture.capability & V4L2_CAP_TIMEPERFRAME) {
+                memset(setfps, 0, sizeof(struct v4l2_streamparm));
+                setfps->type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
+                setfps->parm.capture.timeperframe.numerator = 1;
+                setfps->parm.capture.timeperframe.denominator = vd->fps==-1?255:vd->fps; // if no default fps set set it to maximum
+
+                ret = xioctl(vd->fd, VIDIOC_S_PARM, setfps);
+                if (ret) {
+                    perror("Unable to set the FPS\n");
+                } else {
+                    if (vd->fps != setfps->parm.capture.timeperframe.denominator) {
+                        IPRINT("FPS coerced ......: from %d to %d\n", vd->fps, setfps->parm.capture.timeperframe.denominator);
+                    }
+
+                    // if we selecting lower FPS than the allowed then we will use software framedropping
+                    if (vd->fps < setfps->parm.capture.timeperframe.denominator) {
+                        vd->soft_framedrop = 1;
+                        vd->frame_period_time = 1000/vd->fps; // calcualate frame period time in ms
+                        IPRINT("Frame period time ......: %ld ms\n", vd->frame_period_time);
+
+                        // set FPS to maximum in order to minimize the lagging
+                        memset(setfps, 0, sizeof(struct v4l2_streamparm));
+                        setfps->type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
+                        setfps->parm.capture.timeperframe.numerator = 1;
+                        setfps->parm.capture.timeperframe.denominator = 255;
+                        ret = xioctl(vd->fd, VIDIOC_S_PARM, setfps);
+                        if (ret) {
+                            perror("Unable to set the FPS\n");
+                        }
+                    }
+                }
+            } else {
+                perror("Setting FPS on the capture device is not supported, fallback to software framedropping\n");
+                vd->soft_framedrop = 1;
+                vd->frame_period_time = 1000/vd->fps; // calcualate frame period time in ms
+                IPRINT("Frame period time ......: %ld ms\n", vd->frame_period_time);
+            }
+        } else {
+            perror("Unable to query that the FPS change is supported\n");
+        }
+    }
 
     /*
      * request buffers
@@ -456,7 +535,7 @@ int uvcGrab(struct vdIn *vd)
         if(debug)
             fprintf(stderr, "bytes in used %d \n", vd->buf.bytesused);
         break;
-
+    case V4L2_PIX_FMT_RGB565:
     case V4L2_PIX_FMT_YUYV:
         if(vd->buf.bytesused > vd->framesizeIn)
             memcpy(vd->framebuffer, vd->mem[vd->buf.index], (size_t) vd->framesizeIn);
@@ -644,12 +723,14 @@ int v4l2ResetControl(struct vdIn *vd, int control)
     }
 
     return 0;
-};
+}
 
 void control_readed(struct vdIn *vd, struct v4l2_queryctrl *ctrl, globals *pglobal, int id)
 {
     struct v4l2_control c;
+    memset(&c, 0, sizeof(struct v4l2_control));
     c.id = ctrl->id;
+
     if (pglobal->in[id].in_parameters == NULL) {
         pglobal->in[id].in_parameters = (control*)calloc(1, sizeof(control));
     } else {
@@ -671,6 +752,7 @@ void control_readed(struct vdIn *vd, struct v4l2_queryctrl *ctrl, globals *pglob
         int i;
         for(i = ctrl->minimum; i <= ctrl->maximum; i++) {
             struct v4l2_querymenu qm;
+            memset(&qm, 0 , sizeof(struct v4l2_querymenu));
             qm.id = ctrl->id;
             qm.index = i;
             if(xioctl(vd->fd, VIDIOC_QUERYMENU, &qm) == 0) {
@@ -685,9 +767,8 @@ void control_readed(struct vdIn *vd, struct v4l2_queryctrl *ctrl, globals *pglob
     }
 
     pglobal->in[id].in_parameters[pglobal->in[id].parametercount].value = 0;
-#ifdef V4L2_CTRL_FLAG_NEXT_CTRL
     pglobal->in[id].in_parameters[pglobal->in[id].parametercount].class_id = (ctrl->id & 0xFFFF0000);
-#else
+#ifndef V4L2_CTRL_FLAG_NEXT_CTRL
     pglobal->in[id].in_parameters[pglobal->in[id].parametercount].class_id = V4L2_CTRL_CLASS_USER;
 #endif
 
@@ -716,7 +797,22 @@ void control_readed(struct vdIn *vd, struct v4l2_queryctrl *ctrl, globals *pglob
         ext_ctrls.controls = &ext_ctrl;
         ret = xioctl(vd->fd, VIDIOC_G_EXT_CTRLS, &ext_ctrls);
         if(ret) {
-            DBG("control id: 0x%08x failed to get value (error %i)\n", ext_ctrl.id, ret);
+            switch (ext_ctrl.id) {
+                case V4L2_CID_PAN_RESET:
+                    pglobal->in[id].in_parameters[pglobal->in[id].parametercount].value = 1;
+                    DBG("Setting PAN reset value to 1\n");
+                    break;
+                case V4L2_CID_TILT_RESET:
+                    pglobal->in[id].in_parameters[pglobal->in[id].parametercount].value = 1;
+                    DBG("Setting the Tilt reset value to 2\n");
+                    break;
+                case V4L2_CID_PANTILT_RESET_LOGITECH:
+                    pglobal->in[id].in_parameters[pglobal->in[id].parametercount].value = 3;
+                    DBG("Setting the PAN/TILT reset value to 3\n");
+                    break;
+                default:
+                    DBG("control id: 0x%08x failed to get value (error %i)\n", ext_ctrl.id, ret);
+            }
         } else {
             switch(ctrl->type)
             {
@@ -738,7 +834,7 @@ void control_readed(struct vdIn *vd, struct v4l2_queryctrl *ctrl, globals *pglob
     }
 
     pglobal->in[id].parametercount++;
-};
+}
 
 /*  It should set the capture resolution
     Cheated from the openCV cap_libv4l.cpp the method is the following:
@@ -780,12 +876,20 @@ int setResolution(struct vdIn *vd, int width, int height)
     return ret;
 }
 
+/*
+ *
+ * Enumarates all V4L2 controls using various methods.
+ * It places them to the
+ *
+ */
+
 void enumerateControls(struct vdIn *vd, globals *pglobal, int id)
 {
     // enumerating v4l2 controls
     struct v4l2_queryctrl ctrl;
+    memset(&ctrl, 0, sizeof(struct v4l2_queryctrl));
     pglobal->in[id].parametercount = 0;
-    pglobal->in[id].in_parameters = NULL;
+    pglobal->in[id].in_parameters = malloc(0 * sizeof(control));
     /* Enumerate the v4l2 controls
      Try the extended control API first */
 #ifdef V4L2_CTRL_FLAG_NEXT_CTRL
@@ -859,5 +963,4 @@ void enumerateControls(struct vdIn *vd, globals *pglobal, int id)
         DBG("Modifying the setting of the JPEG compression is not supported\n");
         pglobal->in[id].jpegcomp.quality = -1;
     }
-
 }

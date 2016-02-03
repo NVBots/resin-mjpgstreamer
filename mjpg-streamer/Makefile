@@ -19,8 +19,8 @@ SVNDEV := -D'SVN_REV="$(shell svnversion -c .)"'
 CFLAGS += $(SVNDEV)
 
 # general compile flags, enable all warnings to make compile more verbose
-CFLAGS += -O2 -DLINUX -D_GNU_SOURCE -Wall 
-# CFLAGS += -g 
+CFLAGS += -DLINUX -D_GNU_SOURCE -Wall 
+CFLAGS += -g -Wuninitialized
 #CFLAGS +=  -DDEBUG
 
 # we are using the libraries "libpthread" and "libdl"
@@ -34,17 +34,19 @@ APP_BINARY = mjpg_streamer
 # define the names and targets of the plugins
 PLUGINS = input_uvc.so
 PLUGINS += output_file.so
-PLUGINS += output_udp.so
+#PLUGINS += output_udp.so
 PLUGINS += output_http.so
-PLUGINS += input_testpicture.so
+#PLUGINS += input_testpicture.so
 #PLUGINS += output_autofocus.so
-#PLUGINS += input_gspcav1.so
-PLUGINS += input_file.so
-# PLUGINS += output_rtsp.so
-# PLUGINS += output_ptp2.so # commented out because it depends on libgphoto
-# PLUGINS += input_control.so # commented out because the output_http does it's job
-# PLUGINS += input_http.so 
+#PLUGINS += input_file.so
+# PLUGINS += input_pylon.so
+# PLUGINS += input_megatec.so
+# PLUGINS += output_mars2020.so
+PLUGINS += output_rtsp.so
+# PLUGINS += input_ptp2.so # commented out because it depends on libgphoto
+#PLUGINS += input_http.so 
 # PLUGINS += output_viewer.so # commented out because it depends on SDL
+PLUGINS += input_raspicam.so
 
 # define the names of object files
 OBJECTS=mjpg_streamer.o utils.o
@@ -81,17 +83,13 @@ input_uvc.so: mjpg_streamer.h utils.h
 	cp plugins/input_uvc/input_uvc.so .
 endif
 
-input_control.so: mjpg_streamer.h utils.h
-	make -C plugins/input_control all
-	cp plugins/input_control/input_control.so .
-
 output_file.so: mjpg_streamer.h utils.h
 	make -C plugins/output_file all
 	cp plugins/output_file/output_file.so .
 
 ifeq ($(WXP_COMPAT),true)
 output_http.so: mjpg_streamer.h utils.h
-	make -C plugins/output_http -DWXP_COMPAT all
+	make -C plugins/output_http WXP_COMPAT=true all
 	cp plugins/output_http/output_http.so .
 else
 output_http.so: mjpg_streamer.h utils.h
@@ -102,12 +100,12 @@ endif
 output_udp.so: mjpg_streamer.h utils.h
 	make -C plugins/output_udp all
 	cp plugins/output_udp/output_udp.so .
+	
+output_mars2020.so: mjpg_streamer.h utils.h
+	make -C plugins/output_mars2020 all
+	cp plugins/output_mars2020/output_mars2020.so .
 
-input_gspcav1.so: mjpg_streamer.h utils.h
-	make -C plugins/input_gspcav1 all
-	cp plugins/input_gspcav1/input_gspcav1.so .
-
-input_file.so: mjpg_streamer.h utils.h
+input_file.so:
 	make -C plugins/input_file all
 	cp plugins/input_file/input_file.so .
 
@@ -115,13 +113,26 @@ output_rtsp.so: mjpg_streamer.h utils.h
 	make -C plugins/output_rtsp all
 	cp plugins/output_rtsp/output_rtsp.so .
 	
-output_ptp2.so: mjpg_streamer.h utils.h
+input_ptp2.so: mjpg_streamer.h utils.h
 	make -C plugins/input_ptp2 all
 	cp plugins/input_ptp2/input_ptp2.so .	
+	
+input_megatec.so: mjpg_streamer.h utils.h
+	make -C plugins/input_megatec all
+	cp plugins/input_megatec/input_megatec.so .	
+	
+input_pylon.so: mjpg_streamer.h utils.h
+	make -C plugins/input_pylon all
+	cp plugins/input_megatec/input_pylon.so .	
 
-#input_http.so: mjpg_streamer.h utils.h
-#	make -C plugins/input_http all
-#	cp plugins/input_http/input_http.so .
+input_http.so: mjpg_streamer.h utils.h
+	make -C plugins/input_http all
+	cp plugins/input_http/input_http.so .
+
+input_raspicam.so: mjpg_streamer.h utils.h
+	cd plugins/input_raspicam/build; cmake ..
+	make -C plugins/input_raspicam/build
+	cp plugins/input_raspicam/build/libinput_raspicam.so ./input_raspicam.so
 
 # The viewer plugin requires the SDL library for compilation
 # This is very uncommmon on embedded devices, so it is commented out and will
@@ -140,12 +151,13 @@ clean:
 	make -C plugins/output_http $@
 	make -C plugins/output_udp $@
 	make -C plugins/output_autofocus $@
-	make -C plugins/input_gspcav1 $@
 	make -C plugins/output_viewer $@
-	make -C plugins/input_control $@
 	make -C plugins/output_rtsp $@
-#	make -C plugins/input_http $@
+#	make -C plugins/output_mars2020 $@
+	make -C plugins/input_http $@
 	rm -f *.a *.o $(APP_BINARY) core *~ *.so *.lo
+	rm -f -r plugins/input_raspicam/build/*
+	echo "This folder is where the plugin gets built" > plugins/input_raspicam/build/Readme.md
 
 # useful to make a backup "make tgz"
 tgz: clean
@@ -153,7 +165,7 @@ tgz: clean
 	tar czvf ./backups/mjpg_streamer_`date +"%Y_%m_%d_%H.%M.%S"`.tgz --exclude backups --exclude .svn *
 
 # install MJPG-streamer and example webpages
-install: all
+install: application
 	install --mode=755 $(APP_BINARY) $(DESTDIR)/bin
 	install --mode=644 $(PLUGINS) $(DESTDIR)/lib/
 	install --mode=755 -d $(DESTDIR)/www

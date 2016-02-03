@@ -34,7 +34,6 @@
 #include <stdlib.h>
 #include <unistd.h>
 #include <string.h>
-#include <linux/videodev2.h>
 #include <sys/ioctl.h>
 #include <errno.h>
 #include <signal.h>
@@ -50,6 +49,9 @@
 #include <syslog.h>
 
 #include <dirent.h>
+
+#include <linux/types.h>          /* for videodev2.h */
+#include <linux/videodev2.h>
 
 #include "../../utils.h"
 #include "../../mjpg_streamer.h"
@@ -309,7 +311,7 @@ int output_init(output_parameter *param)
     }
 
     OPRINT("input plugin.....: %d: %s\n", input_number, pglobal->in[input_number].plugin);
-    OPRINT("UDP port..........: %s\n", "disabled");
+    OPRINT("UDP port..........: %d\n", port);
     return 0;
 }
 

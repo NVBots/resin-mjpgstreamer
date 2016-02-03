@@ -27,7 +27,6 @@
 #include <stdlib.h>
 #include <unistd.h>
 #include <string.h>
-#include <linux/videodev2.h>
 #include <sys/ioctl.h>
 #include <errno.h>
 #include <signal.h>
@@ -39,12 +38,19 @@
 #include <pthread.h>
 #include <syslog.h>
 
+#include <linux/types.h>          /* for videodev2.h */
+#include <linux/videodev2.h>
+
 #include "../../utils.h"
-//#include "../../mjpg_streamer.h"
 #include "v4l2uvc.h" // this header will includes the ../../mjpg_streamer.h
-#include "huffman.h"
-#include "jpeg_utils.h"
+
+#ifndef NO_LIBJPEG
+    #include "jpeg_utils.h"
+    #include "huffman.h"
+#endif
+
 #include "dynctrl.h"
+
 //#include "uvcvideo.h"
 
 #define INPUT_PLUGIN_NAME "UVC webcam grabber"
@@ -68,17 +74,37 @@ static const struct {
     { "SXGA", 1280, 1024 }
 };
 
+static const struct {
+    const char *string;
+    const v4l2_std_id vstd;
+} norms[] = {
+    { "UNKNOWN", V4L2_STD_UNKNOWN },
+    { "PAL", V4L2_STD_PAL },
+    { "NTSC", V4L2_STD_NTSC },
+    { "SECAM", V4L2_STD_SECAM }
+};
+
 /* private functions and variables to this plugin */
 static globals *pglobal;
 static int gquality = 80;
 static unsigned int minimum_size = 0;
 static int dynctrls = 1;
+static unsigned int every = 1;
 
 void *cam_thread(void *);
 void cam_cleanup(void *);
 void help(void);
-int input_cmd(int plugin, unsigned int control, unsigned int group, int value);
+int input_cmd(int plugin, unsigned int control, unsigned int group, int value, char *value_string);
 
+const char *get_name_by_tvnorm(v4l2_std_id vstd) {
+	int i;
+	for (i=0;i<sizeof(norms);i++) {
+		if (vstd == norms[i].vstd) {
+			return norms[i].string;
+		}
+	}
+	return norms[0].string;
+}
 
 /*** plugin interface functions ***/
 /******************************************************************************
@@ -93,7 +119,9 @@ Return Value: 0 if everything is fine
 int input_init(input_parameter *param, int id)
 {
     char *dev = "/dev/video0", *s;
-    int width = 640, height = 480, fps = 5, format = V4L2_PIX_FMT_MJPEG, i;
+    int width = 640, height = 480, fps = -1, format = V4L2_PIX_FMT_MJPEG, i;
+    v4l2_std_id tvnorm = V4L2_STD_UNKNOWN;
+
     /* initialize the mutes variable */
     if(pthread_mutex_init(&cams[id].controls_mutex, NULL) != 0) {
         IPRINT("could not initialize mutex variable\n");
@@ -131,6 +159,11 @@ int input_init(input_parameter *param, int id)
             {"no_dynctrl", no_argument, 0, 0},
             {"l", required_argument, 0, 0},
             {"led", required_argument, 0, 0},
+            {"fourcc", required_argument, 0, 0},
+            {"t", required_argument, 0, 0 },
+	        {"tvnorm", required_argument, 0, 0 },
+            {"e", required_argument, 0, 0},
+            {"every_frame", required_argument, 0, 0},
             {0, 0, 0, 0}
         };
 
@@ -148,7 +181,7 @@ int input_init(input_parameter *param, int id)
 
         /* dispatch the given options */
         switch(option_index) {
-            /* h, help */
+        /* h, help */
         case 0:
         case 1:
             DBG("case 0,1\n");
@@ -156,14 +189,14 @@ int input_init(input_parameter *param, int id)
             return 1;
             break;
 
-            /* d, device */
+        /* d, device */
         case 2:
         case 3:
             DBG("case 2,3\n");
             dev = strdup(optarg);
             break;
 
-            /* r, resolution */
+        /* r, resolution */
         case 4:
         case 5:
             DBG("case 4,5\n");
@@ -185,36 +218,37 @@ int input_init(input_parameter *param, int id)
             height = strtol(s + 1, NULL, 10);
             break;
 
-            /* f, fps */
+        /* f, fps */
         case 6:
         case 7:
             DBG("case 6,7\n");
             fps = atoi(optarg);
             break;
 
-            /* y, yuv */
+        /* y, yuv */
+        #ifndef NO_LIBJPEG
         case 8:
         case 9:
             DBG("case 8,9\n");
             format = V4L2_PIX_FMT_YUYV;
             break;
-
-            /* q, quality */
+        #endif
+        /* q, quality */
+        #ifndef NO_LIBJPEG
         case 10:
         case 11:
             DBG("case 10,11\n");
-            format = V4L2_PIX_FMT_YUYV;
             gquality = MIN(MAX(atoi(optarg), 0), 100);
             break;
-
-            /* m, minimum_size */
+        #endif
+        /* m, minimum_size */
         case 12:
         case 13:
             DBG("case 12,13\n");
             minimum_size = MAX(atoi(optarg), 0);
             break;
 
-            /* n, no_dynctrl */
+        /* n, no_dynctrl */
         case 14:
         case 15:
             DBG("case 14,15\n");
@@ -235,7 +269,35 @@ int input_init(input_parameter *param, int id)
           led = IN_CMD_LED_BLINK;
         }*/
             break;
-
+        /* fourcc */
+        #ifndef NO_LIBJPEG
+        case 18:
+            DBG("case 18,19\n");
+            if (strcmp(optarg, "RGBP") == 0) {
+                format = V4L2_PIX_FMT_RGB565;
+            } else {
+                DBG("FOURCC %s not supported\n", optarg);
+            }
+            break;
+        #endif
+        /* t, tvnorm */
+        case 19:
+        case 20:
+            DBG("case 19,20\n");
+            if (strcasecmp("pal",optarg) == 0 ) {
+	             tvnorm = V4L2_STD_PAL;
+            } else if ( strcasecmp("ntsc",optarg) == 0 ) {
+	             tvnorm = V4L2_STD_NTSC;
+            } else if ( strcasecmp("secam",optarg) == 0 ) {
+	             tvnorm = V4L2_STD_SECAM;
+            }
+            break;
+        case 21:
+        /* e, every */
+        case 22:
+            DBG("case 21,22\n");
+            every = MAX(atoi(optarg), 1);
+            break;
         default:
             DBG("default case\n");
             help();
@@ -258,13 +320,38 @@ int input_init(input_parameter *param, int id)
     IPRINT("Using V4L2 device.: %s\n", dev);
     IPRINT("Desired Resolution: %i x %i\n", width, height);
     IPRINT("Frames Per Second.: %i\n", fps);
-    IPRINT("Format............: %s\n", (format == V4L2_PIX_FMT_YUYV) ? "YUV" : "MJPEG");
-    if(format == V4L2_PIX_FMT_YUYV)
-        IPRINT("JPEG Quality......: %d\n", gquality);
+    char *fmtString = NULL;
+    switch (format) {
+        case V4L2_PIX_FMT_MJPEG:
+            fmtString = "JPEG";
+            break;
+        #ifndef NI_LIBJPG
+            case V4L2_PIX_FMT_YUYV:
+                fmtString = "YUYV";
+                break;
+            case V4L2_PIX_FMT_RGB565:
+                fmtString = "RGB565";
+                break;
+        #endif
+        default:
+            fmtString = "Unknown format";
+    }
+
+    IPRINT("Format............: %s\n", fmtString);
+    #ifndef NO_LIBJPEG
+        if(format != V4L2_PIX_FMT_MJPEG)
+            IPRINT("JPEG Quality......: %d\n", gquality);
+    #endif
+
+    if (tvnorm != V4L2_STD_UNKNOWN) {
+        IPRINT("TV-Norm...........: %s\n", get_name_by_tvnorm(tvnorm));
+    } else {
+        IPRINT("TV-Norm...........: DEFAULT\n");
+    }
 
     DBG("vdIn pn: %d\n", id);
     /* open video device and prepare data structure */
-    if(init_videoIn(cams[id].videoIn, dev, width, height, fps, format, 1, cams[id].pglobal, id) < 0) {
+    if(init_videoIn(cams[id].videoIn, dev, width, height, fps, format, 1, cams[id].pglobal, id, tvnorm) < 0) {
         IPRINT("init_VideoIn failed\n");
         closelog();
         exit(EXIT_FAILURE);
@@ -341,17 +428,32 @@ void help(void)
     fprintf(stderr, "\n                          or a custom value like the following" \
     "\n                          example: 640x480\n");
 
+#ifndef NO_LIBJPEG
     fprintf(stderr, " [-f | --fps ]..........: frames per second\n" \
-    " [-y | --yuv ]..........: enable YUYV format and disable MJPEG mode\n" \
-    " [-q | --quality ]......: JPEG compression quality in percent \n" \
     "                          (activates YUYV format, disables MJPEG)\n" \
     " [-m | --minimum_size ].: drop frames smaller then this limit, useful\n" \
     "                          if the webcam produces small-sized garbage frames\n" \
     "                          may happen under low light conditions\n" \
+    " [-e | --every_frame ]..: drop all frames except numbered\n" \
     " [-n | --no_dynctrl ]...: do not initalize dynctrls of Linux-UVC driver\n" \
     " [-l | --led ]..........: switch the LED \"on\", \"off\", let it \"blink\" or leave\n" \
     "                          it up to the driver using the value \"auto\"\n" \
+    " ---------------------------------------------------------------\n\n"
+    " [-t | --tvnorm ] ......: set TV-Norm pal, ntsc or secam\n"
     " ---------------------------------------------------------------\n\n");
+#else
+    fprintf(stderr, " [-f | --fps ]..........: frames per second\n" \
+    "                          (activates YUYV format, disables MJPEG)\n" \
+    " [-m | --minimum_size ].: drop frames smaller then this limit, useful\n" \
+    "                          if the webcam produces small-sized garbage frames\n" \
+    "                          may happen under low light conditions\n" \
+    " [-e | --every_frame ]..: drop all frames except numbered\n" \
+    " [-n | --no_dynctrl ]...: do not initalize dynctrls of Linux-UVC driver\n" \
+    " [-l | --led ]..........: switch the LED \"on\", \"off\", let it \"blink\" or leave\n" \
+    "                          it up to the driver using the value \"auto\"\n" \
+    " [-t | --tvnorm ] ......: set TV-Norm pal, ntsc or secam\n"
+    " ---------------------------------------------------------------\n\n");
+#endif
 }
 
 /******************************************************************************
@@ -361,6 +463,7 @@ Return Value: unused, always NULL
 ******************************************************************************/
 void *cam_thread(void *arg)
 {
+    unsigned int every_count = 0;
 
     context *pcontext = arg;
     pglobal = pcontext->pglobal;
@@ -379,7 +482,15 @@ void *cam_thread(void *arg)
             exit(EXIT_FAILURE);
         }
 
-        DBG("received frame of size: %d from plugin: %d\n", pcontext->videoIn->buf.bytesused, pcontext->id);
+        if ( every_count < every - 1 ) {
+            DBG("dropping %d frame for every=%d\n", every_count + 1, every);
+            ++every_count;
+            continue;
+        } else {
+            every_count = 0;
+        }
+
+        //DBG("received frame of size: %d from plugin: %d\n", pcontext->videoIn->buf.bytesused, pcontext->id);
 
         /*
          * Workaround for broken, corrupted frames:
@@ -393,6 +504,21 @@ void *cam_thread(void *arg)
             continue;
         }
 
+        // use software frame dropping on low fps
+        if (pcontext->videoIn->soft_framedrop == 1) {
+            unsigned long last = pglobal->in[pcontext->id].timestamp.tv_sec * 1000 +
+                                (pglobal->in[pcontext->id].timestamp.tv_usec/1000); // convert to ms
+            unsigned long current = pcontext->videoIn->buf.timestamp.tv_sec * 1000 +
+                                    pcontext->videoIn->buf.timestamp.tv_usec/1000; // convert to ms
+
+            // if the requested time did not esplashed skip the frame
+            if ((current - last) < pcontext->videoIn->frame_period_time) {
+                //DBG("Last frame taken %d ms ago so drop it\n", (current - last));
+                continue;
+            }
+            DBG("Lagg: %ld\n", (current - last) - pcontext->videoIn->frame_period_time);
+        }
+
         /* copy JPG picture to global buffer */
         pthread_mutex_lock(&pglobal->in[pcontext->id].db);
 
@@ -402,17 +528,21 @@ void *cam_thread(void *arg)
          * Getting JPEGs straight from the webcam, is one of the major advantages of
          * Linux-UVC compatible devices.
          */
-        if(pcontext->videoIn->formatIn == V4L2_PIX_FMT_YUYV) {
+        #ifndef NO_LIBJPEG
+        if ((pcontext->videoIn->formatIn == V4L2_PIX_FMT_YUYV) || (pcontext->videoIn->formatIn == V4L2_PIX_FMT_RGB565)) {
             DBG("compressing frame from input: %d\n", (int)pcontext->id);
-            pglobal->in[pcontext->id].size = compress_yuyv_to_jpeg(pcontext->videoIn, pglobal->in[pcontext->id].buf, pcontext->videoIn->framesizeIn, gquality);
+            pglobal->in[pcontext->id].size = compress_image_to_jpeg(pcontext->videoIn, pglobal->in[pcontext->id].buf, pcontext->videoIn->framesizeIn, gquality);
             /* copy this frame's timestamp to user space */
             pglobal->in[pcontext->id].timestamp = pcontext->videoIn->buf.timestamp;
         } else {
+        #endif
             DBG("copying frame from input: %d\n", (int)pcontext->id);
             pglobal->in[pcontext->id].size = memcpy_picture(pglobal->in[pcontext->id].buf, pcontext->videoIn->tmpbuffer, pcontext->videoIn->tmpbytesused);
             /* copy this frame's timestamp to user space */
             pglobal->in[pcontext->id].timestamp = pcontext->videoIn->tmptimestamp;
+        #ifndef NO_LIBJPEG
         }
+        #endif
 
 #if 0
         /* motion detection can be done just by comparing the picture size, but it is not very accurate!! */
@@ -426,15 +556,6 @@ void *cam_thread(void *arg)
         /* signal fresh_frame */
         pthread_cond_broadcast(&pglobal->in[pcontext->id].db_update);
         pthread_mutex_unlock(&pglobal->in[pcontext->id].db);
-
-
-        /* only use usleep if the fps is below 5, otherwise the overhead is too long */
-        if(pcontext->videoIn->fps < 5) {
-            DBG("waiting for next frame for %d us\n", 1000 * 1000 / pcontext->videoIn->fps);
-            usleep(1000 * 1000 / pcontext->videoIn->fps);
-        } else {
-            DBG("waiting for next frame\n");
-        }
     }
 
     DBG("leaving input thread, calling cleanup function now\n");
@@ -476,7 +597,7 @@ Input Value.: * control specifies the selected v4l2 control's id
 Return Value: depends in the command, for most cases 0 means no errors and
               -1 signals an error. This is just rule of thumb, not more!
 ******************************************************************************/
-int input_cmd(int plugin_number, unsigned int control_id, unsigned int group, int value)
+int input_cmd(int plugin_number, unsigned int control_id, unsigned int group, int value, char *value_string)
 {
     int ret = -1;
     int i = 0;

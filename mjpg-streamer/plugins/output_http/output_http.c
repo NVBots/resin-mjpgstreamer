@@ -23,7 +23,6 @@
 #include <stdlib.h>
 #include <unistd.h>
 #include <string.h>
-#include <linux/videodev2.h>
 #include <sys/ioctl.h>
 #include <errno.h>
 #include <signal.h>
@@ -34,6 +33,9 @@
 #include <getopt.h>
 #include <pthread.h>
 #include <syslog.h>
+
+#include <linux/types.h>          /* for videodev2.h */
+#include <linux/videodev2.h>
 
 #include "../../mjpg_streamer.h"
 #include "../../utils.h"
@@ -177,6 +179,10 @@ int output_init(output_parameter *param, int id)
     OPRINT("HTTP TCP port.....: %d\n", ntohs(port));
     OPRINT("username:password.: %s\n", (credentials == NULL) ? "disabled" : credentials);
     OPRINT("commands..........: %s\n", (nocommands) ? "disabled" : "enabled");
+
+    param->global->out[id].name = malloc((strlen(OUTPUT_PLUGIN_NAME) + 1) * sizeof(char));
+    sprintf(param->global->out[id].name, OUTPUT_PLUGIN_NAME);
+
     return 0;
 }
 

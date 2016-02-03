@@ -53,6 +53,7 @@ struct _input_format {
 typedef struct _input input;
 struct _input {
     char *plugin;
+    char *name;
     void *handle;
 
     input_parameter param; // this holds the command line arguments
@@ -82,5 +83,5 @@ struct _input {
     int (*init)(input_parameter *, int id);
     int (*stop)(int);
     int (*run)(int);
-    int (*cmd)(int plugin, unsigned int control_id, unsigned int group, int value);
+    int (*cmd)(int plugin, unsigned int control_id, unsigned int group, int value, char *value_str);
 };

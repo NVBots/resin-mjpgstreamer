@@ -11,18 +11,20 @@ CC = gcc
 
 OTHER_HEADERS = ../../mjpg_streamer.h ../../utils.h ../output.h ../input.h
 
-CFLAGS += -O1 -DLINUX -D_GNU_SOURCE -Wall -shared -fPIC
+CFLAGS += -O1  -DLINUX -D_GNU_SOURCE -Wall -shared -fPIC
 
-#CFLAGS += -g
-#CFLAGS += -DDEBUG
+#CFLAGS += -g -DDEBUG
 
 ifeq ($(USE_LIBV4L2),true)
 LFLAGS += -lv4l2
 CFLAGS += -DUSE_LIBV4L2
 endif
 
-
+ifndef NO_LIBJPEG
 LFLAGS += -ljpeg
+else
+CFLAGS += -DNO_LIBJPEG
+endif
 
 all: input_uvc.so
 

@@ -84,3 +84,4 @@ export LD_LIBRARY_PATH="$(pwd)"
 ## a webpage while another program streams video/audio, like skype.
 #./mjpg_streamer -i "./input_control.so" -o "./output_http.so -w ./www"
 
+
