@@ -26,7 +26,7 @@ fi
 
 
 echo 'resin-mjpgstreamer launching...'
-/app/mjpg-streamer/mjpg_streamer -i "$input" -o "/app/mjpg-streamer/output_http.so -w $auth"
+/app/mjpg-streamer/mjpg_streamer -i "$input" -o "/app/mjpg-streamer/output_http.so -w /app/mjpg-streamer/www $auth"
 
 echo 'resin-mjpgstreamer sleeping for terminal access'
 sleep 600
