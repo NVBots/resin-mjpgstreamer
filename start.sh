@@ -21,6 +21,7 @@ fi
 if [ -z ${USE_RASPICAM+x} ]; then
   input="/app/mjpg-streamer/input_uvc.so -f $framerate -r $resolution"
 else
+  modprobe bcm2835-v4l2
   input="/app/mjpg-streamer/input_raspicam.so -fps $framerate -r $resolution"
 fi
 

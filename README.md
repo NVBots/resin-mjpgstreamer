@@ -30,6 +30,10 @@ There are several settings that can be configured via Environment Variables:
 * RESOLUTION : set to desired resolution {width}x{height}. defaults to 1280x720
 * FRAMERATE: set desired framerate. defaults to 10
 
+Raspberry Pi Camera:
+
+You'll need to edit the default image to enable the raspberry pi cam. Follow instructions from here: http://docs.resin.io/#/pages/hardware/i2c-and-spi.md#raspberry-pi-camera-module
+
 Sources:
 
 mjpg-streamer from https://github.com/jacksonliam/mjpg-streamer
