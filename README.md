@@ -24,7 +24,7 @@ To view on internet, enable public ip through the resin dashboard and click on t
 
 Sources:
 
-mjpg-streamer from svn://svn.code.sf.net/p/mjpg-streamer/code/
+mjpg-streamer from https://github.com/jacksonliam/mjpg-streamer
 
 patched for mjpg support on raspberry pi based on http://www.raspberrypi.org/forums/viewtopic.php?t=97983
 
